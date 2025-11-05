@@ -4,11 +4,12 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const dotenv = require('dotenv');
 const { google } = require('googleapis');
 
 // 외부 인증/환경설정 경로
-const API_KEY_DIR = '/Users/a1/Documents/github/api_key';
+const API_KEY_DIR = fs.readFileSync(path.join(__dirname, 'API_KEY_DIR.txt'), 'utf8').trim();
 const ENV_PATH = path.join(API_KEY_DIR, '.env');
 
 function ensureEnvLoaded() {
@@ -16,7 +17,30 @@ function ensureEnvLoaded() {
 }
 
 function importAuthModule() {
-  return require('/Users/a1/Documents/github/api_key/auth.js');
+  // 현재 프로젝트의 node_modules를 모듈 검색 경로에 추가
+  const Module = require('module');
+  const currentProjectNodeModules = path.join(__dirname, 'node_modules');
+  
+  // 기존 모듈 경로 함수를 백업
+  const originalNodeModulePaths = Module._nodeModulePaths;
+  
+  // auth.js가 로드될 때 현재 프로젝트의 node_modules를 우선 검색하도록 수정
+  Module._nodeModulePaths = function(from) {
+    const paths = originalNodeModulePaths.call(this, from);
+    // 현재 프로젝트의 node_modules를 맨 앞에 추가
+    if (!paths.includes(currentProjectNodeModules)) {
+      paths.unshift(currentProjectNodeModules);
+    }
+    return paths;
+  };
+  
+  try {
+    const authPath = path.join(API_KEY_DIR, 'auth.js');
+    return require(authPath);
+  } finally {
+    // 원래 함수 복원
+    Module._nodeModulePaths = originalNodeModulePaths;
+  }
 }
 
 // 오늘 날짜 YYYY-MM-DD
@@ -122,8 +146,31 @@ async function openCoupangIncognito() {
   let browser;
   
   try {
-    // Chrome 경로
-    const chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    // 플랫폼별 Chrome 경로
+    const platform = os.platform();
+    let chromePath = null;
+    
+    if (platform === 'darwin') {
+      // macOS
+      chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    } else if (platform === 'win32') {
+      // Windows - 여러 가능한 경로 확인
+      const possiblePaths = [
+        path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join('C:', 'Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join('C:', 'Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      ];
+      
+      for (const possiblePath of possiblePaths) {
+        if (fs.existsSync(possiblePath)) {
+          chromePath = possiblePath;
+          break;
+        }
+      }
+    } else if (platform === 'linux') {
+      // Linux
+      chromePath = '/usr/bin/google-chrome';
+    }
     
     // 브라우저 실행 옵션
     const options = {
@@ -131,29 +178,33 @@ async function openCoupangIncognito() {
       defaultViewport: null,
       args: [
         '--start-maximized',
+        '--incognito',  // 브라우저를 직접 incognito 모드로 실행 (Windows 호환성)
         '--no-sandbox',
         '--disable-blink-features=AutomationControlled',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
       ],
       ignoreHTTPSErrors: true,
     };
     
     // Chrome이 있으면 사용
-    if (fs.existsSync(chromePath)) {
+    if (chromePath && fs.existsSync(chromePath)) {
       options.executablePath = chromePath;
+      console.log(`Chrome 경로: ${chromePath}`);
+    } else {
+      console.log('시스템 Chrome을 찾을 수 없습니다. Puppeteer의 기본 Chrome을 사용합니다.');
     }
 
     browser = await puppeteer.launch(options);
     console.log('✅ 시크릿 모드로 크롬이 열렸습니다. 종료하려면 Ctrl+C를 누르세요.\n');
 
-    // 기본 페이지 닫기
-    const pages = await browser.pages();
-    if (pages.length > 0) {
-      await pages[0].close();
-    }
-
-    // 시크릿 모드 컨텍스트 생성
-    const context = await browser.createIncognitoBrowserContext();
-    const page = await context.newPage();
+    // 기본 페이지 사용 (incognito 모드로 실행되었으므로 별도 컨텍스트 생성 불필요)
+    const page = (await browser.pages())[0] || await browser.newPage();
+    
+    // 자동화 감지 방지 (ref.js 참고)
+    await page.evaluateOnNewDocument(() => {
+      delete navigator.__proto__.webdriver;
+    });
 
     // 캐시와 쿠키 삭제
     console.log('캐시와 쿠키를 초기화합니다...');
@@ -166,7 +217,7 @@ async function openCoupangIncognito() {
     await page.goto('https://www.google.com');
 
     // 새 탭 열기
-    const newPage = await context.newPage();
+    const newPage = await browser.newPage();
     console.log('새 탭을 열었습니다.\n');
 
     // 쿠팡으로 이동
@@ -174,7 +225,7 @@ async function openCoupangIncognito() {
     console.log('✅ 쿠팡으로 이동했습니다.\n');
 
     // 다시 새 탭 열기
-    const thirdPage = await context.newPage();
+    const thirdPage = await browser.newPage();
     console.log('새 탭을 열었습니다.\n');
 
     // 쿠팡 특정 페이지로 이동
