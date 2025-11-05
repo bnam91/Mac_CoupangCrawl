@@ -1,0 +1,5 @@
+1번 코드 _ 골드박스 크롤링
+node index-secret.js
+
+2번 코드 _ 몰 추가
+npm start
