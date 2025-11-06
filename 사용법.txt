@@ -1,0 +1,7 @@
+API_KEY_DIR.txt 생성하세요.
+
+맥북
+/Users/a1/Documents/github/api_key
+
+윈도우 미니01
+C:\Users\신현빈\Desktop\github\api_key

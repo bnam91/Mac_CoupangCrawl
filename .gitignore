@@ -26,3 +26,6 @@ yarn-error.log*
 *.tmp
 *.temp
 
+# API Key directory config (OS별로 다름)
+API_KEY_DIR.txt
+

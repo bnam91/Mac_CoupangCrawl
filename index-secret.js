@@ -8,8 +8,73 @@ const os = require('os');
 const dotenv = require('dotenv');
 const { google } = require('googleapis');
 
-// 외부 인증/환경설정 경로
-const API_KEY_DIR = fs.readFileSync(path.join(__dirname, 'API_KEY_DIR.txt'), 'utf8').trim();
+// 외부 인증/환경설정 경로 - 우선순위: 환경변수 > API_KEY_DIR.txt > OS 자동 감지
+function getApiKeyDir() {
+  // 1순위: 환경 변수 (가장 높은 우선순위)
+  if (process.env.API_KEY_DIR) {
+    console.log(`📌 환경 변수에서 경로 사용: ${process.env.API_KEY_DIR}`);
+    return process.env.API_KEY_DIR;
+  }
+  
+  // 2순위: API_KEY_DIR.txt 파일 (선택사항, 사용자 커스터마이징용)
+  const apiKeyDirFile = path.join(__dirname, 'API_KEY_DIR.txt');
+  if (fs.existsSync(apiKeyDirFile)) {
+    try {
+      const customPath = fs.readFileSync(apiKeyDirFile, 'utf8').trim();
+      if (customPath) {
+        console.log(`📌 API_KEY_DIR.txt에서 경로 사용: ${customPath}`);
+        return customPath;
+      }
+    } catch (error) {
+      console.warn(`⚠️ API_KEY_DIR.txt 읽기 실패, 자동 감지로 전환: ${error.message}`);
+    }
+  }
+  
+  // 3순위: OS 자동 감지 (기본값)
+  const platform = os.platform();
+  const homeDir = os.homedir();
+  
+  let defaultPath;
+  if (platform === 'win32') {
+    // Windows: 여러 가능한 경로 시도
+    const possiblePaths = [
+      path.join(homeDir, 'Desktop', 'github', 'api_key'),
+      path.join(homeDir, 'Documents', 'github', 'api_key'),
+      path.join(homeDir, 'github', 'api_key'),
+    ];
+    // 첫 번째로 존재하는 경로 사용, 없으면 첫 번째를 기본값으로
+    for (const possiblePath of possiblePaths) {
+      if (fs.existsSync(possiblePath)) {
+        console.log(`📌 OS 자동 감지 (존재하는 경로): ${possiblePath}`);
+        return possiblePath;
+      }
+    }
+    defaultPath = possiblePaths[0]; // 기본값은 Desktop
+  } else if (platform === 'darwin') {
+    // macOS: 여러 가능한 경로 시도
+    const possiblePaths = [
+      path.join(homeDir, 'Documents', 'github', 'api_key'),
+      path.join(homeDir, 'Desktop', 'github', 'api_key'),
+      path.join(homeDir, 'github', 'api_key'),
+    ];
+    // 첫 번째로 존재하는 경로 사용, 없으면 첫 번째를 기본값으로
+    for (const possiblePath of possiblePaths) {
+      if (fs.existsSync(possiblePath)) {
+        console.log(`📌 OS 자동 감지 (존재하는 경로): ${possiblePath}`);
+        return possiblePath;
+      }
+    }
+    defaultPath = possiblePaths[0]; // 기본값은 Documents
+  } else {
+    // Linux 또는 기타 OS
+    defaultPath = path.join(homeDir, 'Documents', 'github', 'api_key');
+  }
+  
+  console.log(`📌 OS 자동 감지 (기본 경로): ${defaultPath}`);
+  return defaultPath;
+}
+
+const API_KEY_DIR = getApiKeyDir();
 const ENV_PATH = path.join(API_KEY_DIR, '.env');
 
 function ensureEnvLoaded() {
