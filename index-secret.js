@@ -279,14 +279,20 @@ async function openCoupangIncognito() {
     console.log('캐시와 쿠키가 삭제되었습니다.\n');
 
     // 구글로 이동
-    await page.goto('https://www.google.com');
+    await page.goto('https://www.google.com', {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000
+    });
 
     // 새 탭 열기
     const newPage = await browser.newPage();
     console.log('새 탭을 열었습니다.\n');
 
     // 쿠팡으로 이동
-    await newPage.goto('https://www.coupang.com');
+    await newPage.goto('https://www.coupang.com', {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000
+    });
     console.log('✅ 쿠팡으로 이동했습니다.\n');
 
     // 다시 새 탭 열기
@@ -295,7 +301,8 @@ async function openCoupangIncognito() {
 
     // 쿠팡 특정 페이지로 이동
     await thirdPage.goto('https://pages.coupang.com/p/121237?sourceType=gm_crm_goldbox&subSourceType=gm_crm_gwsrtcut', {
-      waitUntil: 'networkidle0'
+      waitUntil: 'domcontentloaded',
+      timeout: 60000
     });
     console.log('✅ 쿠팡 특정 페이지로 이동했습니다.');
     console.log('페이지 로딩 대기 중...');
