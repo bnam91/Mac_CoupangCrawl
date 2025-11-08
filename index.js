@@ -1,11 +1,84 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const dotenv = require('dotenv');
 const { google } = require('googleapis');
 
-// 외부 인증/환경설정 경로
-const API_KEY_DIR = '/Users/a1/Documents/github/api_key';
+// 외부 인증/환경설정 경로 - 우선순위: 환경변수 > API_KEY_DIR.txt > OS 자동 감지
+function getApiKeyDir() {
+  // 1순위: 환경 변수 (가장 높은 우선순위)
+  if (process.env.API_KEY_DIR) {
+    console.log(`📌 환경 변수에서 경로 사용: ${process.env.API_KEY_DIR}`);
+    return process.env.API_KEY_DIR;
+  }
+  
+  // 2순위: API_KEY_DIR.txt 파일 (선택사항, 사용자 커스터마이징용)
+  const apiKeyDirFile = path.join(__dirname, 'API_KEY_DIR.txt');
+  if (fs.existsSync(apiKeyDirFile)) {
+    try {
+      const customPath = fs.readFileSync(apiKeyDirFile, 'utf8').trim();
+      if (customPath) {
+        // 경로 정규화 및 존재 여부 확인
+        const resolvedPath = path.resolve(customPath);
+        if (fs.existsSync(resolvedPath)) {
+          console.log(`📌 API_KEY_DIR.txt에서 경로 사용: ${resolvedPath}`);
+          return resolvedPath;
+        } else {
+          console.warn(`⚠️ API_KEY_DIR.txt의 경로가 존재하지 않습니다: ${resolvedPath}`);
+          console.warn(`⚠️ OS 자동 감지로 전환합니다.`);
+        }
+      }
+    } catch (error) {
+      console.warn(`⚠️ API_KEY_DIR.txt 읽기 실패, 자동 감지로 전환: ${error.message}`);
+    }
+  }
+  
+  // 3순위: OS 자동 감지 (기본값)
+  const platform = os.platform();
+  const homeDir = os.homedir();
+  
+  let defaultPath;
+  if (platform === 'win32') {ㅊㅊ
+    // Windows: 여러 가능한 경로 시도
+    const possiblePaths = [
+      path.join(homeDir, 'Desktop', 'github', 'api_key'),
+      path.join(homeDir, 'Documents', 'github', 'api_key'),
+      path.join(homeDir, 'github', 'api_key'),
+    ];
+    // 첫 번째로 존재하는 경로 사용, 없으면 첫 번째를 기본값으로
+    for (const possiblePath of possiblePaths) {
+      if (fs.existsSync(possiblePath)) {
+        console.log(`📌 OS 자동 감지 (존재하는 경로): ${possiblePath}`);
+        return possiblePath;
+      }
+    }
+    defaultPath = possiblePaths[0]; // 기본값은 Desktop
+  } else if (platform === 'darwin') {
+    // macOS: 여러 가능한 경로 시도
+    const possiblePaths = [
+      path.join(homeDir, 'Documents', 'github', 'api_key'),
+      path.join(homeDir, 'Desktop', 'github', 'api_key'),
+      path.join(homeDir, 'github', 'api_key'),
+    ];
+    // 첫 번째로 존재하는 경로 사용, 없으면 첫 번째를 기본값으로
+    for (const possiblePath of possiblePaths) {
+      if (fs.existsSync(possiblePath)) {
+        console.log(`📌 OS 자동 감지 (존재하는 경로): ${possiblePath}`);
+        return possiblePath;
+      }
+    }
+    defaultPath = possiblePaths[0]; // 기본값은 Documents
+  } else {
+    // Linux 또는 기타 OS
+    defaultPath = path.join(homeDir, 'Documents', 'github', 'api_key');
+  }
+  
+  console.log(`📌 OS 자동 감지 (기본 경로): ${defaultPath}`);
+  return defaultPath;
+}
+
+const API_KEY_DIR = getApiKeyDir();
 const ENV_PATH = path.join(API_KEY_DIR, '.env');
 
 function ensureEnvLoaded() {
@@ -13,9 +86,33 @@ function ensureEnvLoaded() {
 }
 
 function importAuthModule() {
-  // 외부 고정 경로의 auth 모듈 사용
-  // eslint-disable-next-line import/no-dynamic-require, global-require
-  return require('/Users/a1/Documents/github/api_key/auth.js');
+  // 현재 프로젝트의 node_modules를 모듈 검색 경로에 추가
+  const Module = require('module');
+  const currentProjectNodeModules = path.join(__dirname, 'node_modules');
+  
+  // 기존 모듈 경로 함수를 백업
+  const originalNodeModulePaths = Module._nodeModulePaths;
+  
+  // auth.js가 로드될 때 현재 프로젝트의 node_modules를 우선 검색하도록 수정
+  Module._nodeModulePaths = function(from) {
+    const paths = originalNodeModulePaths.call(this, from);
+    // 현재 프로젝트의 node_modules를 맨 앞에 추가
+    if (!paths.includes(currentProjectNodeModules)) {
+      paths.unshift(currentProjectNodeModules);
+    }
+    return paths;
+  };
+  
+  try {
+    const authPath = path.resolve(API_KEY_DIR, 'auth.js');
+    if (!fs.existsSync(authPath)) {
+      throw new Error(`auth.js 파일을 찾을 수 없습니다: ${authPath}`);
+    }
+    return require(authPath);
+  } finally {
+    // 원래 함수 복원
+    Module._nodeModulePaths = originalNodeModulePaths;
+  }
 }
 
 // 브랜드 ID 추출: shop.coupang.com 도메인에서 경로 세그먼트 중
@@ -185,8 +282,31 @@ async function openCoupang() {
   let browser;
   
   try {
-    // Chrome 경로
-    const chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    // 플랫폼별 Chrome 경로
+    const platform = os.platform();
+    let chromePath = null;
+    
+    if (platform === 'darwin') {
+      // macOS
+      chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    } else if (platform === 'win32') {
+      // Windows - 여러 가능한 경로 확인
+      const possiblePaths = [
+        path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join('C:', 'Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join('C:', 'Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      ];
+      
+      for (const possiblePath of possiblePaths) {
+        if (fs.existsSync(possiblePath)) {
+          chromePath = possiblePath;
+          break;
+        }
+      }
+    } else if (platform === 'linux') {
+      // Linux
+      chromePath = '/usr/bin/google-chrome';
+    }
     
     // 브라우저 실행 옵션
     const options = {
@@ -201,8 +321,11 @@ async function openCoupang() {
     };
     
     // Chrome이 있으면 사용
-    if (fs.existsSync(chromePath)) {
+    if (chromePath && fs.existsSync(chromePath)) {
       options.executablePath = chromePath;
+      console.log(`Chrome 경로: ${chromePath}`);
+    } else {
+      console.log('시스템 Chrome을 찾을 수 없습니다. Puppeteer의 기본 Chrome을 사용합니다.');
     }
 
     browser = await puppeteer.launch(options);
