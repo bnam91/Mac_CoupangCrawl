@@ -5,9 +5,28 @@ import sys
 import threading
 import time
 import msvcrt
+import os
 
 # auth.py 파일 경로 추가
-sys.path.append(r"C:\Users\신현빈\Desktop\github\api_key")
+# API_KEY_DIR.txt에서 경로 읽기
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(script_dir)
+api_key_dir_path = os.path.join(project_root, 'API_KEY_DIR.txt')
+
+try:
+    with open(api_key_dir_path, 'r', encoding='utf-8') as f:
+        api_key_dir = f.read().strip()
+    if api_key_dir:
+        sys.path.append(api_key_dir)
+    else:
+        raise ValueError("API_KEY_DIR.txt 파일이 비어있습니다.")
+except FileNotFoundError:
+    print(f"오류: API_KEY_DIR.txt 파일을 찾을 수 없습니다. ({api_key_dir_path})")
+    sys.exit(1)
+except Exception as e:
+    print(f"오류: API_KEY_DIR.txt 파일을 읽는 중 문제가 발생했습니다: {e}")
+    sys.exit(1)
+
 from auth import get_credentials
 
 from googleapiclient.discovery import build

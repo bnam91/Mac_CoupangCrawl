@@ -5,3 +5,7 @@ API_KEY_DIR.txt 생성하세요.
 
 윈도우 미니01
 C:\Users\신현빈\Desktop\github\api_key
+
+
+윈도우 미니03
+"C:\Users\darli\Desktop\github\api_key"

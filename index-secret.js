@@ -7,6 +7,7 @@ const path = require('path');
 const os = require('os');
 const dotenv = require('dotenv');
 const { google } = require('googleapis');
+const readline = require('readline');
 
 // 외부 인증/환경설정 경로 - 우선순위: 환경변수 > API_KEY_DIR.txt > OS 자동 감지
 function getApiKeyDir() {
@@ -207,10 +208,81 @@ async function appendRowToSheet(spreadsheetId, sheetTitle, values) {
   });
 }
 
+// 사용자 입력 받기 (5초 타임아웃, 기본값 y)
+function askUserInput(question) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    console.log(question);
+    rl.setPrompt('');
+    
+    let countdown = 5;
+    let countdownInterval = null;
+    
+    // 카운트다운 표시 함수 (같은 줄에서 업데이트)
+    const updateCountdown = () => {
+      // ANSI escape code: \x1b[2K = 줄 지우기, \r = 커서를 줄 시작으로 이동
+      process.stdout.write(`\r\x1b[2K⏰ ${countdown}초 후 자동으로 y로 처리됩니다... (y/n 입력 가능): `);
+    };
+    
+    // 카운트다운 시작 (1초마다 업데이트)
+    countdownInterval = setInterval(() => {
+      countdown--;
+      updateCountdown();
+      
+      if (countdown <= 0) {
+        clearInterval(countdownInterval);
+        rl.close();
+        process.stdout.write('\n');
+        console.log('⏰ 5초 동안 입력이 없어 자동으로 y로 처리합니다.');
+        resolve('y');
+      }
+    }, 1000);
+    
+    // 초기 카운트다운 표시
+    updateCountdown();
+    
+    // 5초 타임아웃 설정 (백업용)
+    const timeout = setTimeout(() => {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+      }
+      rl.close();
+      process.stdout.write('\n');
+      console.log('⏰ 5초 동안 입력이 없어 자동으로 y로 처리합니다.');
+      resolve('y');
+    }, 5000);
+
+    rl.on('line', (input) => {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+      }
+      clearTimeout(timeout);
+      rl.close();
+      process.stdout.write('\n');
+      const answer = input.trim().toLowerCase();
+      resolve(answer === 'y' ? 'y' : 'n');
+    });
+
+    rl.on('close', () => {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+      }
+      clearTimeout(timeout);
+    });
+  });
+}
+
 async function openCoupangIncognito() {
   let browser;
   
   try {
+    // 가장 먼저 사용자 입력 받기
+    const shouldAutoExit = await askUserInput('크롤링이 끝나면 코드를 종료할까요? (y/n, 5초 내 미입력 시 y): ');
+    
     // 플랫폼별 Chrome 경로
     const platform = os.platform();
     let chromePath = null;
@@ -621,14 +693,23 @@ async function openCoupangIncognito() {
       console.log('판매자로켓 상품이 없어 시트에 추가하지 않습니다.\n');
     }
 
-    // 브라우저 종료 감지
-    browser.on('disconnected', () => {
-      console.log('브라우저가 닫혔습니다.');
+    // 크롤링 완료 후 처리
+    if (shouldAutoExit === 'y') {
+      console.log('✅ 크롤링 완료. 브라우저를 종료합니다.');
+      if (browser) {
+        await browser.close();
+      }
       process.exit(0);
-    });
+    } else {
+      // 브라우저 종료 감지
+      browser.on('disconnected', () => {
+        console.log('브라우저가 닫혔습니다.');
+        process.exit(0);
+      });
 
-    // 무한 대기
-    await new Promise(() => {});
+      // 무한 대기
+      await new Promise(() => {});
+    }
 
   } catch (error) {
     console.error('오류:', error.message);

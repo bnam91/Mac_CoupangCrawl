@@ -1,21 +1,146 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const dotenv = require('dotenv');
 const { google } = require('googleapis');
+const readline = require('readline');
 
-// 외부 인증/환경설정 경로
-const API_KEY_DIR = '/Users/a1/Documents/github/api_key';
-const ENV_PATH = path.join(API_KEY_DIR, '.env');
-
-function ensureEnvLoaded() {
-  dotenv.config({ path: ENV_PATH, override: false });
+// 외부 인증/환경설정 경로 - 우선순위: 환경변수 > API_KEY_DIR.txt > OS 자동 감지
+function getApiKeyDir() {
+  // 1순위: 환경 변수 (가장 높은 우선순위)
+  if (process.env.API_KEY_DIR) {
+    console.log(`📌 환경 변수에서 경로 사용: ${process.env.API_KEY_DIR}`);
+    return process.env.API_KEY_DIR;
+  }
+  
+  // 2순위: API_KEY_DIR.txt 파일 (선택사항, 사용자 커스터마이징용)
+  const apiKeyDirFile = path.join(__dirname, 'API_KEY_DIR.txt');
+  if (fs.existsSync(apiKeyDirFile)) {
+    try {
+      const customPath = fs.readFileSync(apiKeyDirFile, 'utf8').trim();
+      if (customPath) {
+        // 경로 정규화 및 존재 여부 확인
+        const resolvedPath = path.resolve(customPath);
+        if (fs.existsSync(resolvedPath)) {
+          console.log(`📌 API_KEY_DIR.txt에서 경로 사용: ${resolvedPath}`);
+          return resolvedPath;
+        } else {
+          console.warn(`⚠️ API_KEY_DIR.txt의 경로가 존재하지 않습니다: ${resolvedPath}`);
+          console.warn(`⚠️ OS 자동 감지로 전환합니다.`);
+        }
+      }
+    } catch (error) {
+      console.warn(`⚠️ API_KEY_DIR.txt 읽기 실패, 자동 감지로 전환: ${error.message}`);
+    }
+  }
+  
+  // 3순위: OS 자동 감지 (기본값)
+  const platform = os.platform();
+  const homeDir = os.homedir();
+  
+  let defaultPath;
+  if (platform === 'win32') {
+    // Windows: 여러 가능한 경로 시도
+    const possiblePaths = [
+      path.join(homeDir, 'Desktop', 'github', 'api_key'),
+      path.join(homeDir, 'Documents', 'github', 'api_key'),
+      path.join(homeDir, 'github', 'api_key'),
+    ];
+    // 첫 번째로 존재하는 경로 사용, 없으면 첫 번째를 기본값으로
+    for (const possiblePath of possiblePaths) {
+      if (fs.existsSync(possiblePath)) {
+        console.log(`📌 OS 자동 감지 (존재하는 경로): ${possiblePath}`);
+        return possiblePath;
+      }
+    }
+    defaultPath = possiblePaths[0]; // 기본값은 Desktop
+  } else if (platform === 'darwin') {
+    // macOS: 여러 가능한 경로 시도
+    const possiblePaths = [
+      path.join(homeDir, 'Documents', 'github', 'api_key'),
+      path.join(homeDir, 'Desktop', 'github', 'api_key'),
+      path.join(homeDir, 'github', 'api_key'),
+    ];
+    // 첫 번째로 존재하는 경로 사용, 없으면 첫 번째를 기본값으로
+    for (const possiblePath of possiblePaths) {
+      if (fs.existsSync(possiblePath)) {
+        console.log(`📌 OS 자동 감지 (존재하는 경로): ${possiblePath}`);
+        return possiblePath;
+      }
+    }
+    defaultPath = possiblePaths[0]; // 기본값은 Documents
+  } else {
+    // Linux 또는 기타 OS
+    defaultPath = path.join(homeDir, 'Documents', 'github', 'api_key');
+  }
+  
+  console.log(`📌 OS 자동 감지 (기본 경로): ${defaultPath}`);
+  return defaultPath;
 }
 
+const API_KEY_DIR = getApiKeyDir();
+const ENV_PATH = path.join(API_KEY_DIR, '.env');
+
+// 초기 환경 변수 로드
+function ensureEnvLoaded() {
+  // .env 파일 존재 여부 확인
+  if (!fs.existsSync(ENV_PATH)) {
+    console.warn(`⚠️ .env 파일을 찾을 수 없습니다: ${ENV_PATH}`);
+    return;
+  }
+  
+  // 환경 변수 로드 (override: true로 설정하여 항상 최신 값으로 덮어쓰기)
+  const result = dotenv.config({ path: ENV_PATH, override: true });
+  
+  // 로드 결과 확인
+  if (result.error) {
+    console.warn(`⚠️ .env 파일 로드 중 오류: ${result.error.message}`);
+  } else {
+    // 환경 변수 확인
+    const hasClientId = !!process.env.GOOGLE_CLIENT_ID;
+    const hasClientSecret = !!process.env.GOOGLE_CLIENT_SECRET;
+    if (!hasClientId || !hasClientSecret) {
+      console.warn(`⚠️ 환경 변수 확인: GOOGLE_CLIENT_ID=${hasClientId ? '있음' : '없음'}, GOOGLE_CLIENT_SECRET=${hasClientSecret ? '있음' : '없음'}`);
+      console.warn(`⚠️ .env 파일 경로: ${ENV_PATH}`);
+    }
+  }
+}
+
+// 프로그램 시작 시 환경 변수 로드
+ensureEnvLoaded();
+
 function importAuthModule() {
-  // 외부 고정 경로의 auth 모듈 사용
-  // eslint-disable-next-line import/no-dynamic-require, global-require
-  return require('/Users/a1/Documents/github/api_key/auth.js');
+  // auth.js 로드 전에 환경 변수 로드
+  ensureEnvLoaded();
+  
+  // 현재 프로젝트의 node_modules를 모듈 검색 경로에 추가
+  const Module = require('module');
+  const currentProjectNodeModules = path.join(__dirname, 'node_modules');
+  
+  // 기존 모듈 경로 함수를 백업
+  const originalNodeModulePaths = Module._nodeModulePaths;
+  
+  // auth.js가 로드될 때 현재 프로젝트의 node_modules를 우선 검색하도록 수정
+  Module._nodeModulePaths = function(from) {
+    const paths = originalNodeModulePaths.call(this, from);
+    // 현재 프로젝트의 node_modules를 맨 앞에 추가
+    if (!paths.includes(currentProjectNodeModules)) {
+      paths.unshift(currentProjectNodeModules);
+    }
+    return paths;
+  };
+  
+  try {
+    const authPath = path.resolve(API_KEY_DIR, 'auth.js');
+    if (!fs.existsSync(authPath)) {
+      throw new Error(`auth.js 파일을 찾을 수 없습니다: ${authPath}`);
+    }
+    return require(authPath);
+  } finally {
+    // 원래 함수 복원
+    Module._nodeModulePaths = originalNodeModulePaths;
+  }
 }
 
 // 브랜드 ID 추출: shop.coupang.com 도메인에서 경로 세그먼트 중
@@ -181,12 +306,106 @@ async function fetchNextLinkWhereGEmpty(spreadsheetId, sheetName) {
   return { url: '', rowNumber: null, uniqueId: '' };
 }
 
+// 사용자 입력 받기 (5초 타임아웃, 기본값 y)
+function askUserInput(question) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    console.log(question);
+    rl.setPrompt('');
+    
+    let countdown = 5;
+    let countdownInterval = null;
+    
+    // 카운트다운 표시 함수 (같은 줄에서 업데이트)
+    const updateCountdown = () => {
+      // ANSI escape code: \x1b[2K = 줄 지우기, \r = 커서를 줄 시작으로 이동
+      process.stdout.write(`\r\x1b[2K⏰ ${countdown}초 후 자동으로 y로 처리됩니다... (y/n 입력 가능): `);
+    };
+    
+    // 카운트다운 시작 (1초마다 업데이트)
+    countdownInterval = setInterval(() => {
+      countdown--;
+      updateCountdown();
+      
+      if (countdown <= 0) {
+        clearInterval(countdownInterval);
+        rl.close();
+        process.stdout.write('\n');
+        console.log('⏰ 5초 동안 입력이 없어 자동으로 y로 처리합니다.');
+        resolve('y');
+      }
+    }, 1000);
+    
+    // 초기 카운트다운 표시
+    updateCountdown();
+    
+    // 5초 타임아웃 설정 (백업용)
+    const timeout = setTimeout(() => {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+      }
+      rl.close();
+      process.stdout.write('\n');
+      console.log('⏰ 5초 동안 입력이 없어 자동으로 y로 처리합니다.');
+      resolve('y');
+    }, 5000);
+
+    rl.on('line', (input) => {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+      }
+      clearTimeout(timeout);
+      rl.close();
+      process.stdout.write('\n');
+      const answer = input.trim().toLowerCase();
+      resolve(answer === 'y' ? 'y' : 'n');
+    });
+
+    rl.on('close', () => {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+      }
+      clearTimeout(timeout);
+    });
+  });
+}
+
 async function openCoupang() {
   let browser;
   
   try {
-    // Chrome 경로
-    const chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    // 가장 먼저 사용자 입력 받기
+    const shouldAutoExit = await askUserInput('크롤링이 끝나면 코드를 종료할까요? (y/n, 5초 내 미입력 시 y): ');
+    
+    // 플랫폼별 Chrome 경로
+    const platform = os.platform();
+    let chromePath = null;
+    
+    if (platform === 'darwin') {
+      // macOS
+      chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    } else if (platform === 'win32') {
+      // Windows - 여러 가능한 경로 확인
+      const possiblePaths = [
+        path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join('C:', 'Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join('C:', 'Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      ];
+      
+      for (const possiblePath of possiblePaths) {
+        if (fs.existsSync(possiblePath)) {
+          chromePath = possiblePath;
+          break;
+        }
+      }
+    } else if (platform === 'linux') {
+      // Linux
+      chromePath = '/usr/bin/google-chrome';
+    }
     
     // 브라우저 실행 옵션
     const options = {
@@ -194,30 +413,54 @@ async function openCoupang() {
       defaultViewport: null,
       args: [
         '--start-maximized',
+        '--incognito',  // 브라우저를 직접 incognito 모드로 실행 (Windows 호환성)
         '--no-sandbox',
         '--disable-blink-features=AutomationControlled',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
       ],
       ignoreHTTPSErrors: true,
     };
     
     // Chrome이 있으면 사용
-    if (fs.existsSync(chromePath)) {
+    if (chromePath && fs.existsSync(chromePath)) {
       options.executablePath = chromePath;
+      console.log(`Chrome 경로: ${chromePath}`);
+    } else {
+      console.log('시스템 Chrome을 찾을 수 없습니다. Puppeteer의 기본 Chrome을 사용합니다.');
     }
 
     browser = await puppeteer.launch(options);
-    console.log('✅ 크롬이 열렸습니다. 종료하려면 Ctrl+C를 누르세요.\n');
+    console.log('✅ 시크릿 모드로 크롬이 열렸습니다. 종료하려면 Ctrl+C를 누르세요.\n');
 
     // 첫 번째 페이지 사용
     const pages = await browser.pages();
-    const page = pages[0];
+    const page = pages[0] || await browser.newPage();
+    
+    // 자동화 감지 방지
+    await page.evaluateOnNewDocument(() => {
+      delete navigator.__proto__.webdriver;
+    });
+
+    // 캐시와 쿠키 삭제
+    console.log('캐시와 쿠키를 초기화합니다...');
+    const client = await page.target().createCDPSession();
+    await client.send('Network.clearBrowserCookies');
+    await client.send('Network.clearBrowserCache');
+    console.log('캐시와 쿠키가 삭제되었습니다.\n');
 
     // 구글로 이동
-    await page.goto('https://www.google.com');
+    await page.goto('https://www.google.com', {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000
+    });
 
     // 새 탭을 열어 쿠팡 사이트로 이동
     const coupangPage = await browser.newPage();
-    await coupangPage.goto('https://www.coupang.com');
+    await coupangPage.goto('https://www.coupang.com', {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000
+    });
 
     // 루프: G열이 빈 행을 순차 처리
     const spreadsheetId = '1YWiFGyJjNDbOC8eFTbS1HEhmxfZAC-hLvI8KdA1Gku8';
@@ -453,26 +696,37 @@ async function openCoupang() {
         if (shouldClosePage && linkPage) {
           previousLinkPage = linkPage;
         }
-        // break가 아닌 경우에만 대기
+        // break가 아닌 경우에만 대기 (랜덤 대기: 3-7초)
         if (shouldClosePage) {
-          await new Promise(r => setTimeout(r, delayMs));
+          const randomDelay = Math.floor(Math.random() * 4000) + 3000; // 3000-7000ms (3-7초)
+          console.log(`⏳ ${(randomDelay / 1000).toFixed(1)}초 랜덤 대기 후 다음 로우로 이동...`);
+          await new Promise(r => setTimeout(r, randomDelay));
         }
       }
     }
     
-    // 루프 종료 후 마지막 탭은 보존 (닫지 않음)
-    if (previousLinkPage) {
-      console.log('✅ 크롤링 완료. 마지막 탭은 열어둡니다.');
-    }
-
-    // 브라우저 종료 감지
-    browser.on('disconnected', () => {
-      console.log('브라우저가 닫혔습니다.');
+    // 루프 종료 후 처리
+    if (shouldAutoExit === 'y') {
+      console.log('✅ 크롤링 완료. 브라우저를 종료합니다.');
+      if (browser) {
+        await browser.close();
+      }
       process.exit(0);
-    });
+    } else {
+      // 마지막 탭은 보존 (닫지 않음)
+      if (previousLinkPage) {
+        console.log('✅ 크롤링 완료. 마지막 탭은 열어둡니다.');
+      }
 
-    // 무한 대기
-    await new Promise(() => {});
+      // 브라우저 종료 감지
+      browser.on('disconnected', () => {
+        console.log('브라우저가 닫혔습니다.');
+        process.exit(0);
+      });
+
+      // 무한 대기
+      await new Promise(() => {});
+    }
 
   } catch (error) {
     console.error('오류:', error.message);
