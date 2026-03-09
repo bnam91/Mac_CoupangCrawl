@@ -234,11 +234,31 @@ async function appendRowWithCheckboxes(spreadsheetId, sheetTitle, values) {
 
   if (rowIndex0 == null) return;
 
-  // K(10), L(11) 컬럼에 체크박스(BOOLEAN 데이터 검증) 추가 및 초기값 FALSE
+  // I(8), K(10), L(11) 컬럼에 체크박스(BOOLEAN 데이터 검증) 추가 - I열은 TRUE, K/L열은 FALSE
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
     requestBody: {
       requests: [
+        {
+          repeatCell: {
+            range: {
+              sheetId,
+              startRowIndex: rowIndex0,
+              endRowIndex: rowIndex0 + 1,
+              startColumnIndex: 8,
+              endColumnIndex: 9,
+            },
+            cell: {
+              userEnteredValue: { boolValue: true },
+              dataValidation: {
+                condition: { type: 'BOOLEAN' },
+                strict: true,
+                showCustomUi: true,
+              },
+            },
+            fields: 'userEnteredValue,dataValidation',
+          },
+        },
         {
           repeatCell: {
             range: {
