@@ -306,6 +306,28 @@ async function fetchNextLinkWhereGEmpty(spreadsheetId, sheetName) {
   return { url: '', rowNumber: null, uniqueId: '' };
 }
 
+// 출력 시트 C열(판매자이름)에 값이 이미 존재하는지 확인
+async function existsInOutputSheetByC(spreadsheetId, sheetTitle, valueToCheck) {
+  if (!valueToCheck || !String(valueToCheck).trim()) return false;
+  ensureEnvLoaded();
+  const auth = importAuthModule();
+  const creds = await auth.getCredentials();
+  const sheets = google.sheets({ version: 'v4', auth: creds });
+  const rangeA1 = `${sheetTitle}!C2:C`;
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: rangeA1,
+      majorDimension: 'COLUMNS',
+    });
+    const colValues = (res.data.values && res.data.values[0]) || [];
+    const normalized = String(valueToCheck).trim();
+    return colValues.some((v) => String(v || '').trim() === normalized);
+  } catch (_) {
+    return false;
+  }
+}
+
 // 사용자 입력 받기 (5초 타임아웃, 기본값 y)
 function askUserInput(question) {
   return new Promise((resolve) => {
@@ -463,11 +485,11 @@ async function openCoupang() {
     });
 
     // 루프: G열이 빈 행을 순차 처리
-    const spreadsheetId = '1YWiFGyJjNDbOC8eFTbS1HEhmxfZAC-hLvI8KdA1Gku8';
+    const spreadsheetId = '1WdWdRvvfm4Cen6KA3yM1JMsr0CCceEMKJRgnmT49szM';
     const sheetName = '1.(DB)상품추가';
     const outSheetName = '2.(DB)지표셀러';
     const delayMs = 800;
-    const maxSets = Infinity;
+    const maxSets = 8; // 한 번에 너무 많이 진행하면 막히므로 최대 8개만 처리
     let processed = 0;
 
     let previousLinkPage = null; // 이전 반복의 탭 저장
@@ -657,13 +679,20 @@ async function openCoupang() {
         try {
           const today = formatTodayYYYYMMDD();
           const outputSellerName = foundSellerName ? foundSellerName : '판매자 이름을 찾을 수 없습니다.';
-          // A: 날짜, B: 판매자ID, C: 판매자이름, D: 현재탭이동URL, E: 고유아이디, F: 몰이름, G: 등급, H: 전체상품수
-          await appendRowWithCheckboxes(
-            spreadsheetId,
-            outSheetName,
-            [today, brandId, outputSellerName, changedUrl, uniqueId || '', mallName, sellerGrade, totalProductCount]
-          );
-          console.log(`📝 시트 기록 완료: ${outSheetName} 시트 A:H + K,L 체크박스`);
+
+          // C열(판매자이름) 기준 중복 체크: 이미 등록된 판매자면 스킵
+          const alreadyExists = await existsInOutputSheetByC(spreadsheetId, outSheetName, outputSellerName);
+          if (alreadyExists) {
+            console.log(`⏭️ 이미 등록된 판매자(스킵): ${outputSellerName}`);
+          } else {
+            // A: 날짜, B: 판매자ID, C: 판매자이름, D: 현재탭이동URL, E: 고유아이디, F: 몰이름, G: 등급, H: 전체상품수
+            await appendRowWithCheckboxes(
+              spreadsheetId,
+              outSheetName,
+              [today, brandId, outputSellerName, changedUrl, uniqueId || '', mallName, sellerGrade, totalProductCount]
+            );
+            console.log(`📝 시트 기록 완료: ${outSheetName} 시트 A:H + K,L 체크박스`);
+          }
           try {
             await updateSheetGCell(spreadsheetId, sheetName, rowNumber, today);
             console.log(`🗓️ ${sheetName}!G${rowNumber} = ${today}`);
@@ -683,7 +712,7 @@ async function openCoupang() {
         if (rowNumber) {
           try {
             const errMsg = (err && err.message ? err.message : String(err)).slice(0, 2000);
-            await updateSheetGCell('1YWiFGyJjNDbOC8eFTbS1HEhmxfZAC-hLvI8KdA1Gku8', sheetName, rowNumber, errMsg);
+            await updateSheetGCell('1WdWdRvvfm4Cen6KA3yM1JMsr0CCceEMKJRgnmT49szM', sheetName, rowNumber, errMsg);
           } catch (_) {}
         }
       } finally {
