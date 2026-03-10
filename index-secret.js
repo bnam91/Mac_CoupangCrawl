@@ -9,9 +9,16 @@ const dotenv = require('dotenv');
 const { google } = require('googleapis');
 const readline = require('readline');
 
-// 외부 인증/환경설정 경로 - 우선순위: 환경변수 > API_KEY_DIR.txt > OS 자동 감지
+// 외부 인증/환경설정 경로 - 우선순위: module_auth > 환경변수 > API_KEY_DIR.txt > OS 자동 감지
+const AUTH_MODULE_PATH = path.join(os.homedir(), 'Documents', 'github_cloud', 'module_auth');
+
 function getApiKeyDir() {
-  // 1순위: 환경 변수 (가장 높은 우선순위)
+  // 0순위: module_auth (github_cloud 공용 auth)
+  if (fs.existsSync(path.join(AUTH_MODULE_PATH, 'auth.js'))) {
+    console.log(`📌 module_auth 사용: ${AUTH_MODULE_PATH}`);
+    return AUTH_MODULE_PATH;
+  }
+  // 1순위: 환경 변수
   if (process.env.API_KEY_DIR) {
     console.log(`📌 환경 변수에서 경로 사용: ${process.env.API_KEY_DIR}`);
     return process.env.API_KEY_DIR;
@@ -77,6 +84,14 @@ function getApiKeyDir() {
 
 const API_KEY_DIR = getApiKeyDir();
 const ENV_PATH = path.join(API_KEY_DIR, '.env');
+
+// auth.js용: .env 경로 (module_api_key)
+if (API_KEY_DIR === AUTH_MODULE_PATH) {
+  const moduleEnvPath = path.join(os.homedir(), 'Documents', 'github_cloud', 'module_api_key', '.env');
+  if (fs.existsSync(moduleEnvPath)) {
+    process.env.UTILS_AUTH_ENV_PATH = moduleEnvPath;
+  }
+}
 
 function ensureEnvLoaded() {
   dotenv.config({ path: ENV_PATH, override: false });
@@ -627,7 +642,7 @@ async function openCoupangIncognito() {
 
     // 구글 스프레드시트에 추가
     if (merchantRocketProducts.length > 0) {
-      const spreadsheetId = '1YWiFGyJjNDbOC8eFTbS1HEhmxfZAC-hLvI8KdA1Gku8';
+      const spreadsheetId = '1WdWdRvvfm4Cen6KA3yM1JMsr0CCceEMKJRgnmT49szM';
       const sheetTitle = '1.(DB)상품추가';
       const today = formatTodayYYYYMMDD();
       

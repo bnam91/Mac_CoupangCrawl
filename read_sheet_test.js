@@ -2,20 +2,20 @@ const path = require("path");
 const dotenv = require("dotenv");
 const { google } = require("googleapis");
 
-const API_KEY_DIR = "/Users/a1/Documents/github/api_key";
-const ENV_PATH = path.join(API_KEY_DIR, ".env");
+const API_KEY_DIR = path.join(require("os").homedir(), "Documents", "github_cloud", "module_auth");
+const ENV_PATH = path.join(require("os").homedir(), "Documents", "github_cloud", "module_api_key", ".env");
 
-// 외부 auth.js는 자체 의존성을 사용 (별도 검색 경로 보강 불필요)
+// auth.js용 .env 경로 지정
+process.env.UTILS_AUTH_ENV_PATH = ENV_PATH;
 
 function ensureEnvLoaded() {
-  // 지정된 .env를 로드한다. auth.js가 참조할 수 있게 선 로드
   dotenv.config({ path: ENV_PATH, override: false });
 }
 
 function importAuthModule() {
-  // 고정 경로만 사용
+  // module_auth 사용
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  return require("/Users/a1/Documents/github/api_key/auth.js");
+  return require(path.join(API_KEY_DIR, "auth.js"));
 }
 
 async function fetchFirstFiveRows(spreadsheetId, sheetName) {

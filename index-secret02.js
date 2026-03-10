@@ -6,9 +6,16 @@ const dotenv = require('dotenv');
 const { google } = require('googleapis');
 const readline = require('readline');
 
-// 외부 인증/환경설정 경로 - 우선순위: 환경변수 > API_KEY_DIR.txt > OS 자동 감지
+// 외부 인증/환경설정 경로 - 우선순위: module_auth > 환경변수 > API_KEY_DIR.txt > OS 자동 감지
+const AUTH_MODULE_PATH = path.join(os.homedir(), 'Documents', 'github_cloud', 'module_auth');
+
 function getApiKeyDir() {
-  // 1순위: 환경 변수 (가장 높은 우선순위)
+  // 0순위: module_auth (github_cloud 공용 auth)
+  if (fs.existsSync(path.join(AUTH_MODULE_PATH, 'auth.js'))) {
+    console.log(`📌 module_auth 사용: ${AUTH_MODULE_PATH}`);
+    return AUTH_MODULE_PATH;
+  }
+  // 1순위: 환경 변수
   if (process.env.API_KEY_DIR) {
     console.log(`📌 환경 변수에서 경로 사용: ${process.env.API_KEY_DIR}`);
     return process.env.API_KEY_DIR;
@@ -82,37 +89,31 @@ function getApiKeyDir() {
 const API_KEY_DIR = getApiKeyDir();
 const ENV_PATH = path.join(API_KEY_DIR, '.env');
 
-// 초기 환경 변수 로드
-function ensureEnvLoaded() {
-  // .env 파일 존재 여부 확인
-  if (!fs.existsSync(ENV_PATH)) {
-    console.warn(`⚠️ .env 파일을 찾을 수 없습니다: ${ENV_PATH}`);
-    return;
+// auth.js용: .env 경로 (module_api_key)
+if (API_KEY_DIR === AUTH_MODULE_PATH) {
+  const moduleEnvPath = path.join(os.homedir(), 'Documents', 'github_cloud', 'module_api_key', '.env');
+  if (fs.existsSync(moduleEnvPath)) {
+    process.env.UTILS_AUTH_ENV_PATH = moduleEnvPath;
   }
-  
-  // 환경 변수 로드 (override: true로 설정하여 항상 최신 값으로 덮어쓰기)
-  const result = dotenv.config({ path: ENV_PATH, override: true });
-  
-  // 로드 결과 확인
-  if (result.error) {
-    console.warn(`⚠️ .env 파일 로드 중 오류: ${result.error.message}`);
-  } else {
-    // 환경 변수 확인
-    const hasClientId = !!process.env.GOOGLE_CLIENT_ID;
-    const hasClientSecret = !!process.env.GOOGLE_CLIENT_SECRET;
-    if (!hasClientId || !hasClientSecret) {
-      console.warn(`⚠️ 환경 변수 확인: GOOGLE_CLIENT_ID=${hasClientId ? '있음' : '없음'}, GOOGLE_CLIENT_SECRET=${hasClientSecret ? '있음' : '없음'}`);
-      console.warn(`⚠️ .env 파일 경로: ${ENV_PATH}`);
-    }
-  }
+  // index-secret.js와 동일: module_auth 사용 시 module_api_key/.env 로드
+  dotenv.config({ path: moduleEnvPath, override: false });
 }
 
-// 프로그램 시작 시 환경 변수 로드
-ensureEnvLoaded();
+function ensureEnvLoaded() {
+  dotenv.config({ path: API_KEY_DIR === AUTH_MODULE_PATH ? path.join(os.homedir(), 'Documents', 'github_cloud', 'module_api_key', '.env') : ENV_PATH, override: false });
+}
+
+// 인증 정보 캐시 (한 번 인증 후 재사용, 반복 재인증 방지)
+let _cachedCreds = null;
+
+async function getCreds() {
+  if (_cachedCreds) return _cachedCreds;
+  const auth = importAuthModule();
+  _cachedCreds = await auth.getCredentials();
+  return _cachedCreds;
+}
 
 function importAuthModule() {
-  // auth.js 로드 전에 환경 변수 로드
-  ensureEnvLoaded();
   
   // 현재 프로젝트의 node_modules를 모듈 검색 경로에 추가
   const Module = require('module');
@@ -167,8 +168,7 @@ function extractBrandId(urlStr) {
 // 시트 ID 조회
 async function getSheetIdByTitle(spreadsheetId, sheetTitle) {
   ensureEnvLoaded();
-  const auth = importAuthModule();
-  const creds = await auth.getCredentials();
+  const creds = await getCreds();
   const sheets = google.sheets({ version: 'v4', auth: creds });
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
   const sheet = (meta.data.sheets || []).find(s => s.properties && s.properties.title === sheetTitle);
@@ -178,8 +178,7 @@ async function getSheetIdByTitle(spreadsheetId, sheetTitle) {
 // 시트 존재 보장 (없으면 생성) 후 sheetId 반환
 async function ensureSheet(spreadsheetId, sheetTitle) {
   ensureEnvLoaded();
-  const auth = importAuthModule();
-  const creds = await auth.getCredentials();
+  const creds = await getCreds();
   const sheets = google.sheets({ version: 'v4', auth: creds });
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
   const existing = (meta.data.sheets || []).find(s => s.properties && s.properties.title === sheetTitle);
@@ -201,11 +200,10 @@ function formatTodayYYYYMMDD() {
   return `${y}-${m}-${d}`;
 }
 
-// A:H에 값 append 후, 동일 행의 K:L에 체크박스 추가
+// A:H에 값 append 후, 동일 행의 I열에 체크박스 추가
 async function appendRowWithCheckboxes(spreadsheetId, sheetTitle, values) {
   ensureEnvLoaded();
-  const auth = importAuthModule();
-  const creds = await auth.getCredentials();
+  const creds = await getCreds();
   const sheets = google.sheets({ version: 'v4', auth: creds });
 
   const sheetId = await ensureSheet(spreadsheetId, sheetTitle);
@@ -234,7 +232,7 @@ async function appendRowWithCheckboxes(spreadsheetId, sheetTitle, values) {
 
   if (rowIndex0 == null) return;
 
-  // I(8), K(10), L(11) 컬럼에 체크박스(BOOLEAN 데이터 검증) 추가 - I열은 TRUE, K/L열은 FALSE
+  // I(8) 컬럼에만 체크박스 추가 (초기값 TRUE)
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
     requestBody: {
@@ -259,26 +257,6 @@ async function appendRowWithCheckboxes(spreadsheetId, sheetTitle, values) {
             fields: 'userEnteredValue,dataValidation',
           },
         },
-        {
-          repeatCell: {
-            range: {
-              sheetId,
-              startRowIndex: rowIndex0,
-              endRowIndex: rowIndex0 + 1,
-              startColumnIndex: 10,
-              endColumnIndex: 12,
-            },
-            cell: {
-              userEnteredValue: { boolValue: false },
-              dataValidation: {
-                condition: { type: 'BOOLEAN' },
-                strict: true,
-                showCustomUi: true,
-              },
-            },
-            fields: 'userEnteredValue,dataValidation',
-          },
-        },
       ],
     },
   });
@@ -287,8 +265,7 @@ async function appendRowWithCheckboxes(spreadsheetId, sheetTitle, values) {
 // '테스트' 시트의 특정 행 G열에 값 업데이트
 async function updateSheetGCell(spreadsheetId, sheetTitle, rowNumber1Based, value) {
   ensureEnvLoaded();
-  const auth = importAuthModule();
-  const creds = await auth.getCredentials();
+  const creds = await getCreds();
   const sheets = google.sheets({ version: 'v4', auth: creds });
   const range = `${sheetTitle}!G${rowNumber1Based}`;
   await sheets.spreadsheets.values.update({
@@ -301,8 +278,7 @@ async function updateSheetGCell(spreadsheetId, sheetTitle, rowNumber1Based, valu
 
 async function fetchNextLinkWhereGEmpty(spreadsheetId, sheetName) {
   ensureEnvLoaded();
-  const auth = importAuthModule();
-  const creds = await auth.getCredentials();
+  const creds = await getCreds();
   const sheets = google.sheets({ version: 'v4', auth: creds });
   // C열과 G열을 2행부터 끝까지 조회 (헤더는 1행)
   const rangeA1 = `${sheetName}!C2:G`;
@@ -330,8 +306,7 @@ async function fetchNextLinkWhereGEmpty(spreadsheetId, sheetName) {
 async function existsInOutputSheetByC(spreadsheetId, sheetTitle, valueToCheck) {
   if (!valueToCheck || !String(valueToCheck).trim()) return false;
   ensureEnvLoaded();
-  const auth = importAuthModule();
-  const creds = await auth.getCredentials();
+  const creds = await getCreds();
   const sheets = google.sheets({ version: 'v4', auth: creds });
   const rangeA1 = `${sheetTitle}!C2:C`;
   try {
@@ -711,7 +686,7 @@ async function openCoupang() {
               outSheetName,
               [today, brandId, outputSellerName, changedUrl, uniqueId || '', mallName, sellerGrade, totalProductCount]
             );
-            console.log(`📝 시트 기록 완료: ${outSheetName} 시트 A:H + K,L 체크박스`);
+            console.log(`📝 시트 기록 완료: ${outSheetName} 시트 A:H + I열 체크박스`);
           }
           try {
             await updateSheetGCell(spreadsheetId, sheetName, rowNumber, today);
