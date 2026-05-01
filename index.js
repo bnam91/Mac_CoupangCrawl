@@ -293,9 +293,25 @@ async function fetchNextLinkWhereGEmpty(spreadsheetId, sheetName) {
   return { url: '', rowNumber: null, uniqueId: '' };
 }
 
+const LOG_DIR = path.join(__dirname, 'logs');
+
+function saveCrawlLog(data) {
+  try {
+    if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    const logPath = path.join(LOG_DIR, `crawl_summary_${dateStr}.json`);
+    fs.writeFileSync(logPath, JSON.stringify(data, null, 2), 'utf8');
+    console.log(`📄 로그 저장: ${logPath}`);
+  } catch (e) {
+    console.warn('⚠️ 로그 저장 실패:', e.message);
+  }
+}
+
 async function openCoupang() {
   let browser;
-  
+  let crawlLog = { processed: 0, errors: 0, start_time: new Date().toISOString(), end_time: null, success: false };
+
   try {
     // 플랫폼별 Chrome 경로
     const platform = os.platform();
@@ -574,6 +590,7 @@ async function openCoupang() {
         }
 
       } catch (err) {
+        crawlLog.errors += 1;
         console.warn('⚠️ 세트 처리 중 오류:', err && err.message ? err.message : err);
         if (rowNumber) {
           try {
@@ -583,6 +600,7 @@ async function openCoupang() {
         }
       } finally {
         processed += 1;
+        crawlLog.processed = processed;
         // 이전 반복의 탭을 닫음 (첫 반복이 아닌 경우)
         if (previousLinkPage && shouldClosePage) {
           try { await previousLinkPage.close(); } catch (_) {}
@@ -603,6 +621,10 @@ async function openCoupang() {
       console.log('✅ 크롤링 완료. 마지막 탭은 열어둡니다.');
     }
 
+    crawlLog.success = crawlLog.errors === 0;
+    crawlLog.end_time = new Date().toISOString();
+    saveCrawlLog(crawlLog);
+
     // 브라우저 종료 감지
     browser.on('disconnected', () => {
       console.log('브라우저가 닫혔습니다.');
@@ -614,6 +636,10 @@ async function openCoupang() {
 
   } catch (error) {
     console.error('오류:', error.message);
+    crawlLog.success = false;
+    crawlLog.end_time = new Date().toISOString();
+    crawlLog.error_message = error.message;
+    saveCrawlLog(crawlLog);
     process.exit(1);
   }
 }

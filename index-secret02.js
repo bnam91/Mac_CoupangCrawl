@@ -6,6 +6,19 @@ const dotenv = require('dotenv');
 const { google } = require('googleapis');
 const readline = require('readline');
 
+// 스케줄러 로그 저장
+const SCHED_LOG_DIR = path.join(os.homedir(), 'Documents', 'claude_skills', 'scheduler_logs');
+function saveSchedLog(name, data) {
+  try {
+    if (!fs.existsSync(SCHED_LOG_DIR)) fs.mkdirSync(SCHED_LOG_DIR, { recursive: true });
+    const d = new Date();
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    fs.writeFileSync(path.join(SCHED_LOG_DIR, `${name}_${dateStr}.json`), JSON.stringify({ ...data, time: d.toISOString() }, null, 2));
+  } catch (e) {
+    console.error('로그 저장 실패:', e.message);
+  }
+}
+
 // 외부 인증/환경설정 경로 - 우선순위: module_auth > 환경변수 > API_KEY_DIR.txt > OS 자동 감지
 const AUTH_MODULE_PATH = path.join(os.homedir(), 'Documents', 'github_cloud', 'module_auth');
 
@@ -732,6 +745,7 @@ async function openCoupang() {
     // 루프 종료 후 처리
     if (shouldAutoExit === 'y') {
       console.log('✅ 크롤링 완료. 브라우저를 종료합니다.');
+      saveSchedLog('coupang_crawl_sellerdb', { status: 'success', processed });
       if (browser) {
         await browser.close();
       }
