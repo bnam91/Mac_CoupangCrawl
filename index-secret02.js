@@ -1,4 +1,4 @@
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -612,7 +612,7 @@ async function openCoupang() {
           console.log(`크롤링하기 등급 → ${sellerGrade}`);
 
           // '전체 상품' 탭 클릭 (XPath로 찾기)
-          const allProductsLinks = await linkPage.$x("//a[normalize-space(text())='전체 상품']");
+          const allProductsLinks = await linkPage.$$("xpath///a[normalize-space(text())='전체 상품']");
           if (allProductsLinks.length > 0) {
             console.log('전체상품수 탭 클릭');
             await Promise.all([

@@ -1,7 +1,7 @@
 
 // node index-secret.js
 
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
